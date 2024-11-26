@@ -1,204 +1,233 @@
 import pandas as pd
-from sklearn.cluster import DBSCAN
-from sqlalchemy import create_engine, text
+# import boto3
+# from botocore.exceptions import NoCredentialsError
+from sqlalchemy import create_engine
 from sqlalchemy.exc import DatabaseError
+from datetime import datetime
 
 
 config = {
-    'write': {
+
+
+    'Home': {
         'USERNAME': 'root',
         'PASSWORD': 'ahmad09102',
         'HOST': '127.0.0.1',
         'PORT': '3306',
-        'DATABASE_NAME': 'data',
-        'TABLE_NAME': 'outlier'
+        'DATABASE_NAME': 'outlierdatabase',
+        'TABLE_NAME': 'outliertable_home'
+    },
+
+    'Date': {
+        'USERNAME': 'root',
+        'PASSWORD': 'ahmad09102',
+        'HOST': '127.0.0.1',
+        'PORT': '3306',
+        'DATABASE_NAME': 'outlierdatabase',
+        'TABLE_NAME': 'outliertable_date'
     }
+
 }
 
 
-class DataProcessor:
-    def __init__(self):
-        pass
+# class S3Uploader:
+#
+#     def __init__(self, aws_config):
+#         self.s3_client = boto3.client(
+#             's3',
+#             aws_access_key_id=aws_config['AWS_ACCESS_KEY_ID'],
+#             aws_secret_access_key=aws_config['AWS_SECRET_ACCESS_KEY']
+#         )
+#         self.bucket_name = aws_config['BUCKET_NAME']
+#
+#     def upload_to_s3(self, dataframe, file_name):
+#         try:
+#             temp_file = f"{file_name}.parquet"
+#             dataframe.to_parquet(temp_file)
+#             print(f"Parquet file {temp_file} created locally.")
+#
+#             s3_file_path = f"analysis_ahmad/{file_name}.parquet"
+#
+#             self.s3_client.upload_file(temp_file, self.bucket_name, s3_file_path)
+#             print(f"File {s3_file_path} uploaded to S3 bucket {self.bucket_name}.")
+#         except NoCredentialsError:
+#             print("AWS credentials not found.")
+#         except Exception as e:
+#             print(f"Error uploading file to S3: {e}")
 
+class DatabaseHandler:
+    def __init__(self, db_config):
+        self.db_config = db_config
 
+    def create_engine(self):
+        db_url = self._create_db_url()
+        return create_engine(db_url)
 
-    # def fetch_all_data(self, chunk_size=50000):
-    #     config_list = self.create_db_url('default')
-    #     engine = self.create_engine(config_list[0])
-    #     table_name = config_list[1]
-    #
-    #     all_data = []
-    #
-    #     try:
-    #         with engine.connect() as connection:
-    #             query = f"SELECT * FROM {table_name}"
-    #             for chunk in pd.read_sql(query, connection, chunksize=chunk_size):
-    #                 all_data.append(chunk)
-    #             print("Data fetched successfully in chunks")
-    #
-    #     except DatabaseError as e:
-    #         raise Exception(f"Database error: {e}")
-    #
-    #     df = pd.concat(all_data, ignore_index=True)
-    #
-    #     return df
-    #
-    # def save_to_parquet(self, df):
-    #     parquet_filename = "data2.parquet"
-    #     df.to_parquet(parquet_filename)
-    #     print(f"Data saved to {parquet_filename}")
+    def _create_db_url(self):
+        configure = self.db_config
+        configure['PASSWORD'] = configure['PASSWORD'].replace('@', '%40')
+        db_url = (f"mysql+pymysql://{configure['USERNAME']}:{configure['PASSWORD']}"
+                  f"@{configure['HOST']}:{configure['PORT']}/{configure['DATABASE_NAME']}")
+        return db_url
 
-    # def load_parquet(self, filename):
-    #     df = pd.read_parquet(filename)
-    #     print(f"Data loaded from {filename}")
-    #     return df
-    #
-    # def process_table(self, df, chunk_size=50000):
-    #     config_list_write = self.create_db_url('write')
-    #     engine_db2 = self.create_engine(config_list_write[0])
-    #
-    #     with engine_db2.connect() as connection_db2:
-    #         query = """
-    #              CREATE TABLE IF NOT EXISTS processed_table (
-    #                  id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
-    #                  amhdpid INT,
-    #                  `key` VARCHAR(250),
-    #                  createdDate DATE,
-    #                  rent FLOAT
-    #              )
-    #              """
-    #         connection_db2.execute(text(query))
-    #         print("Processed  table created or already exists")
-    #
-    #         for start in range(0, len(df), chunk_size):
-    #             chunk_data = df.iloc[start:start + chunk_size]
-    #             insert_query = """
-    #                INSERT INTO processed_table (amhdpid, `key`, createdDate, rent)
-    #                VALUES
-    #                """
-    #             values_list = []
-    #
-    #             for row in chunk_data.itertuples(index=False):
-    #                 values_list.append(
-    #                     f"({row.id}, \"{row.key}\", '{row.createdDate.strftime('%Y-%m-%d')}', {row.rent})")
-    #
-    #             insert_query += ",".join(values_list)
-    #
-    #             connection_db2.execute(text(insert_query))
-    #             connection_db2.commit()
-    #
-    #             print(f"Inserted chunk starting at index {start} into processed table")
-
-    def analysis(self, chunk_size=50000):
-        config_list = self.create_db_url('write')
-        engine = self.create_engine(config_list[0])
-        table_name = config_list[1]
-
+    def save_to_database(self, dataframe, table_name):
+        engine = self.create_engine()
         try:
             with engine.connect() as connection:
-                check_table_query = "SHOW TABLES LIKE 'processed_table_child'"
-                result = connection.execute(text(check_table_query)).fetchall()
-                if not result:
-                    print("processed_table does not exist, skipping analysis.")
-                    return
+                dataframe.to_sql(table_name, con=connection, if_exists='replace', index=False)
+                print(f"Data saved to table: {table_name}")
+        except DatabaseError as e:
+            raise Exception(f"Error saving data to database: {e}")
 
-                query_dates = "SELECT DISTINCT createdDate FROM processed_table_child"
-                result_distinct_dates = connection.execute(text(query_dates))
-                dates = result_distinct_dates.fetchall()
 
-                for date in dates:
-                    analysis_date = date[0]
-                    print(f"Performing analysis for {analysis_date}")
+class DataProcessor:
+    def __init__(self, config):
+        self.config = config
+        # self.s3_uploader = S3Uploader(config['AWS'])
+        # self.parent_db_handler = DatabaseHandler(config['Parent'])
+        # self.child_db_handler = DatabaseHandler(config['Child'])
+        self.home_db_handler = DatabaseHandler(config['Home'])
+        self.date_db_handler = DatabaseHandler(config['Date'])
 
-                    query = f"SELECT * FROM processed_table_child WHERE DATE(createdDate) = '{analysis_date}'"
-                    chunk_iter = pd.read_sql(query, connection, chunksize=chunk_size)
+    def fetch_all_data(self, db_handler, chunk_size=50000):
+        engine = db_handler.create_engine()
+        table_name = db_handler.db_config['TABLE_NAME']
 
-                    for chunk_index, chunk_data in enumerate(chunk_iter, 1):
-                        chunk_data['date'] = [pd.Timestamp(d).toordinal() for d in chunk_data['createdDate']]
-                        x = chunk_data[['date', 'rent']].values
-
-                        dbscan = DBSCAN(eps=0.2, min_samples=12)
-                        dbscan_labels = dbscan.fit_predict(x)
-                        outliers = dbscan_labels == -1
-                        chunk_data = chunk_data.drop(columns=['date'])
-                        chunk_data['outliers'] = outliers
-                        chunk_data['mean'] = chunk_data['rent'].mean()
-                        chunk_data['count'] = chunk_data['rent'].count()
-                        chunk_data['median'] = chunk_data['rent'].median()
-
-                        if chunk_index == 1:
-                            create_table_query = f"""
-                               CREATE TABLE IF NOT EXISTS `{table_name}` (
-                                   id INT,
-                                   amhdpid INT,
-                                   `key` VARCHAR(250),
-                                   createdDate DATE,
-                                   rent FLOAT,
-                                   outliers BOOLEAN,
-                                   mean FLOAT,
-                                   count FLOAT,
-                                   median FLOAT
-                               )
-                               """
-                            connection.execute(text(create_table_query))
-                            print("Outlier analysis table created")
-
-                        insert_query = f"""
-                           INSERT INTO `{table_name}` (id, amhdpid, `key`, createdDate, rent, outliers, mean, count, median)
-                           VALUES
-                           """
-                        values_list = []
-
-                        for row in chunk_data.itertuples(index=False):
-                            values_list.append(
-                                f"({row.id}, {row.amhdpid}, \"{row.key}\", '{row.createdDate.strftime('%Y-%m-%d')}', {row.rent}, {row.outliers}, {row.mean}, {row.count}, {row.median})"
-                            )
-
-                        insert_query += ",".join(values_list)
-                        connection.execute(text(insert_query))
-                        connection.commit()
-
-                        print(f"Analysis results saved for chunk starting at index {chunk_index}")
+        all_data = []
+        try:
+            with engine.connect() as connection:
+                query = f"SELECT * FROM {table_name}"
+                for chunk in pd.read_sql(query, connection, chunksize=chunk_size):
+                    all_data.append(chunk)
+                print(f"Data fetched successfully from table {table_name} in chunks.")
         except DatabaseError as e:
             raise Exception(f"Database error: {e}")
-    @staticmethod
-    def create_db_url(config_set):
-        configure = config[config_set]
-        configure['PASSWORD'] = configure['PASSWORD'].replace('@', '%40')
-        db_url = f"mysql+pymysql://{configure['USERNAME']}:{configure['PASSWORD']}@{configure['HOST']}:{configure['PORT']}/{configure['DATABASE_NAME']}"
-        if 'CLIENT_CERT_PATH' in configure and 'CLIENT_KEY_PATH' in configure:
-            db_url += f"?ssl_cert={configure['CLIENT_CERT_PATH']}&ssl_key={configure['CLIENT_KEY_PATH']}"
-        return [db_url, configure['TABLE_NAME']]
 
-    @staticmethod
-    def create_engine(db_url):
-        return create_engine(db_url)
+        return pd.concat(all_data, ignore_index=True)
+
+    def save_to_parquet(self, dataframe, file_prefix):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        parquet_filename = f"{file_prefix}_{timestamp}.parquet"
+        dataframe.to_parquet(parquet_filename)
+        print(f"Data saved to {parquet_filename}")
+        return parquet_filename
+
+    def perform_home_based_analysis_and_save(self, df_parent, df_child):
+        df_child['createdDate'] = pd.to_datetime(df_child['createdDate'])
+        df_child_filtered = df_child[df_child['createdDate'] >= '2023-01-01']
+        df_child_filtered.loc[:, 'rent'] = pd.to_numeric(df_child_filtered['rent'], errors='coerce')
+        df_child_filtered = df_child_filtered.dropna(subset=['rent'])
+
+        df_merged = df_child_filtered.merge(
+            df_parent[['id', 'city']], left_on='homeId', right_on='id', how='left'
+        )
+
+        def detect_outliers(group):
+            Q1 = group['rent'].quantile(0.25)
+            Q3 = group['rent'].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            group['is_outlier'] = (~group['rent'].between(lower_bound, upper_bound)).astype(int)
+            return group
+
+        df_with_outliers = df_merged.groupby('city').apply(detect_outliers)
+
+        rent_stats = df_with_outliers.groupby('homeId').agg(
+            mean_rent=('rent', 'mean'),
+            median_rent=('rent', 'median'),
+            rent_count=('rent', 'count')
+        ).reset_index()
+
+        df_final = df_with_outliers.merge(rent_stats, on='homeId', how='left')
+
+        df_final_selected = df_final[[
+            'homeId', 'id_x', 'rent', 'createdDate', 'key', 'city', 'is_outlier', 'mean_rent', 'median_rent', 'rent_count'
+        ]].rename(columns={'id_x': 'childId'})
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        table_name = f"{self.config['Home']['TABLE_NAME']}_{timestamp}"
+        self.home_db_handler.save_to_database(df_final_selected, table_name)
+
+        file_name = f"home_based_analysis_{timestamp}"
+        df_final_selected.to_csv(f"{file_name}.csv", index=False)
+        print(f"Home-based analysis saved as CSV: {file_name}.csv")
+
+        # self.s3_uploader.upload_to_s3(df_final_selected, file_name)
+
+    def perform_date_based_analysis_and_save(self, df_child):
+        df_child['createdDate'] = pd.to_datetime(df_child['createdDate'])
+        df_child_filtered = df_child[df_child['createdDate'] >= '2023-01-01']
+        df_child_filtered.loc[:, 'rent'] = pd.to_numeric(df_child_filtered['rent'], errors='coerce')
+        df_child_filtered = df_child_filtered.dropna(subset=['rent'])
+
+        def detect_outliers(group):
+            Q1 = group['rent'].quantile(0.25)
+            Q3 = group['rent'].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            group['is_outlier'] = (~group['rent'].between(lower_bound, upper_bound)).astype(int)
+            return group
+
+        df_with_outliers = df_child_filtered.groupby('createdDate').apply(detect_outliers).reset_index(drop=True)
+
+        rent_stats = df_with_outliers.groupby('createdDate').agg(
+            mean_rent=('rent', 'mean'),
+            median_rent=('rent', 'median'),
+            rent_count=('rent', 'count')
+        ).reset_index()
+
+        df_final = df_with_outliers.merge(rent_stats, on='createdDate', how='left')
+
+        df_final_selected = df_final[[
+            'id', 'rent', 'createdDate', 'key',  'is_outlier', 'mean_rent', 'median_rent', 'rent_count'
+        ]]
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        table_name = f"{self.config['Date']['TABLE_NAME']}_{timestamp}"
+        self.date_db_handler.save_to_database(df_final_selected, table_name)
+
+        file_name = f"date_based_analysis_{timestamp}"
+        df_final_selected.to_csv(f"{file_name}.csv", index=False)
+        print(f"Date-based analysis saved as CSV: {file_name}.csv")
+
+        # self.s3_uploader.upload_to_s3(df_final_selected, file_name)
 
 
 if __name__ == '__main__':
-    processor = DataProcessor()
+    processor = DataProcessor(config)
 
     # try:
-    #     df = processor.fetch_all_data()
-    #     print("All data fetched.")
-    # except Exception as e:
-    #     print(f"Error in fetching data: {e}")
+    #     df_parent = processor.fetch_all_data(processor.parent_db_handler)
+    #     print("All parent data fetched.")
     #
-    # try:
-    #     processor.save_to_parquet(df)
-    #     print("Data saved to Parquet.")
-    # except Exception as e:
-    #     print(f"Error in saving data to Parquet: {e}")
+    #     df_child = processor.fetch_all_data(processor.child_db_handler)
+    #     print("All child data fetched.")
     #
-    # try:
-    #     df = processor.load_parquet("data2.parquet")
-    #     processor.process_table(df, chunk_size=50000)
-    #     print("Data processed and inserted.")
+    #     parent_parquet_file = processor.save_to_parquet(df_parent, "parent")
+    #     print(f"Parent data saved to Parquet: {parent_parquet_file}")
+    #
+    #     child_parquet_file = processor.save_to_parquet(df_child, "child")
+    #     print(f"Child data saved to Parquet: {child_parquet_file}")
     # except Exception as e:
-    #     print(f"Error in processing data: {e}")
+    #     print(f"Error during data fetching or saving to Parquet: {e}")
+    #     exit()
 
     try:
-        processor.analysis(chunk_size=50000)
-        print("Analysis completed and saved.")
+        # df_parent = pd.read_parquet(parent_parquet_file)
+        # df_child = pd.read_parquet(child_parquet_file)
+
+        df_parent = pd.read_parquet('parent.parquet')
+        df_child = pd.read_parquet('child.parquet')
+
+        processor.perform_home_based_analysis_and_save(df_parent, df_child)
+        print("Home-based analysis completed.")
     except Exception as e:
-        print(f"Error in analysis and saving results: {e}")
+        print(f"Error during home-based analysis: {e}")
+
+    try:
+        processor.perform_date_based_analysis_and_save(df_child)
+        print("Date-based analysis completed.")
+    except Exception as e:
+        print(f"Error during date-based analysis: {e}")
